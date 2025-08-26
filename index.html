@@ -134,7 +134,8 @@
         const body = document.body;
         const statusMessage = document.getElementById('status-message');
         const buttons = document.querySelectorAll('.color-button');
-
+        let audioContext;
+        
         // كائن لتخزين الأصوات المجهزة مسبقًا
         const audioCache = {};
         
@@ -242,8 +243,7 @@
                         const sampleRate = sampleRateMatch ? parseInt(sampleRateMatch[1], 10) : 16000;
                         const pcmData = base64ToArrayBuffer(audioData);
                         const pcm16 = new Int16Array(pcmData);
-                        const wavBlob = pcmToWav(pcm16, sampleRate);
-                        return URL.createObjectURL(wavBlob);
+                        return pcmToWav(pcm16, sampleRate);
                     } else {
                         console.error("Audio data or mime type not found in response.");
                         return null;
@@ -261,11 +261,17 @@
             const colorNames = Array.from(buttons).map(btn => btn.getAttribute('data-color-name'));
             statusMessage.textContent = 'جاري تحميل الأصوات...';
             statusMessage.style.display = 'block';
-            const promises = colorNames.map(name => fetchAndProcessAudio(name).then(url => {
-                if (url) {
-                    audioCache[name] = new Audio(url);
+            
+            const promises = colorNames.map(async (name) => {
+                const wavBlob = await fetchAndProcessAudio(name);
+                if (wavBlob) {
+                    const arrayBuffer = await wavBlob.arrayBuffer();
+                    await audioContext.decodeAudioData(arrayBuffer, (buffer) => {
+                        audioCache[name] = buffer;
+                    });
                 }
-            }));
+            });
+
             await Promise.all(promises);
             statusMessage.style.display = 'none';
         };
@@ -273,8 +279,10 @@
         // وظيفة لتشغيل الصوت المخزن مؤقتاً
         const playCachedAudio = (colorName) => {
             if (audioCache[colorName]) {
-                audioCache[colorName].currentTime = 0;
-                audioCache[colorName].play();
+                const source = audioContext.createBufferSource();
+                source.buffer = audioCache[colorName];
+                source.connect(audioContext.destination);
+                source.start(0);
             }
         };
 
@@ -299,9 +307,16 @@
         const startGame = async () => {
             if (isStarted) return;
             isStarted = true;
+            
+            // إنشاء AudioContext وبدء تشغيله
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            await audioContext.resume();
+
             startButton.style.display = 'none';
             statusMessage.style.display = 'block';
+
             await preloadAudio();
+
             statusMessage.style.display = 'none';
             buttonContainer.style.display = 'block';
             document.getElementById('instructions').textContent = 'أزرار ممتعة للضغط عليها!';
